@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Automation Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Test Automation Dashboard</h1>
+        
+        <div class="input-section">
+            <div class="form-group">
+                <label for="authToken">Auth Token:</label>
+                <input type="text" id="authToken" placeholder="Enter your auth token">
+            </div>
+            
+            <div class="form-group">
+                <label for="testIds">Test IDs (one per line):</label>
+                <textarea id="testIds" rows="5" placeholder="Enter test IDs, one per line"></textarea>
+            </div>
+            
+            <button id="startAutomation">Start Code Export</button>
+        </div>
+
+        <!-- <div class="status-section">
+            <h2>Status Updates</h2>
+            <div class="logs-header">
+                <span>Real-time Logs</span>
+                <button id="clearLogs" class="clear-btn">Clear Logs</button>
+            </div>
+            <div id="statusLogs" class="logs-container"></div>
+        </div>
+
+        <div class="results-section">
+            <h2>Results</h2>
+            <div id="results" class="results-container"></div>
+            <div class="download-section">
+                <button id="downloadLogs" class="download-btn" disabled>Download Logs</button>
+                <span id="logFileName" class="log-file-name"></span>
+            </div>
+        </div> -->
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const authTokenInput = document.getElementById('authToken');
+            const testIdsInput = document.getElementById('testIds');
+            const startButton = document.getElementById('startAutomation');
+            const statusLogs = document.getElementById('statusLogs');
+            const resultsDiv = document.getElementById('results');
+            const downloadButton = document.getElementById('downloadLogs');
+            const clearLogsButton = document.getElementById('clearLogs');
+            const logFileName = document.getElementById('logFileName');
+            let logFile = '';
+            let eventSources = {};
+            let logEventSource = null;
+
+            function startLogUpdates() {
+                // Close existing log event source if any
+                if (logEventSource) {
+                    logEventSource.close();
+                }
+
+                // Create new event source for logs
+                logEventSource = new EventSource('/api/logs');
+                logEventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    if (data.logs && data.logs.length > 0) {
+                        data.logs.forEach(log => {
+                            addLog(log.message);
+                        });
+                    }
+                };
+
+                logEventSource.onerror = function(error) {
+                    console.error('Log EventSource failed:', error);
+                    logEventSource.close();
+                };
+            }
+
+            startButton.addEventListener('click', async () => {
+                const authToken = authTokenInput.value.trim();
+                const testIds = testIdsInput.value.trim().split('\n').filter(id => id.trim());
+                
+                if (!authToken || testIds.length === 0) {
+                    alert('Please enter both auth token and at least one test ID');
+                    return;
+                }
+
+                // Clear previous results and logs
+                statusLogs.innerHTML = '';
+                resultsDiv.innerHTML = '';
+                downloadButton.disabled = true;
+                logFileName.textContent = '';
+
+                // Start log updates
+                startLogUpdates();
+
+                // Show initial status
+                addLog('Starting automation process...');
+
+                try {
+                    const response = await fetch('/api/run-automation', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            auth_token: authToken,
+                            test_ids: testIds
+                        })
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+
+                    const data = await response.json();
+                    
+                    // Display results
+                    displayResults(data.results);
+                    
+                    // Enable download button and show log file name
+                    logFile = data.log_file;
+                    logFileName.textContent = logFile;
+                    downloadButton.disabled = false;
+
+                    // Start listening for status updates for each test ID
+                    testIds.forEach(testId => {
+                        startStatusUpdates(testId);
+                    });
+                    
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                }
+            });
+
+            clearLogsButton.addEventListener('click', () => {
+                statusLogs.innerHTML = '';
+                addLog('Logs cleared');
+            });
+
+            function startStatusUpdates(testId) {
+                // Close existing event source if any
+                if (eventSources[testId]) {
+                    eventSources[testId].close();
+                }
+
+                // Create new event source
+                const eventSource = new EventSource(`/api/status/${testId}`);
+                eventSources[testId] = eventSource;
+
+                eventSource.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    addLog(`Current codegen status for ${testId}: ${data.status}`);
+                    
+                    // Update the result display
+                    updateResultStatus(testId, data.status);
+                };
+
+                eventSource.onerror = function(error) {
+                    console.error('EventSource failed:', error);
+                    eventSource.close();
+                };
+            }
+
+            function updateResultStatus(testId, status) {
+                const resultEntry = document.querySelector(`.result-entry[data-test-id="${testId}"]`);
+                if (resultEntry) {
+                    resultEntry.className = `result-entry ${status}`;
+                    resultEntry.querySelector('.status').textContent = status;
+                }
+            }
+
+            downloadButton.addEventListener('click', () => {
+                if (logFile) {
+                    window.location.href = `/download-logs?file=${logFile}`;
+                }
+            });
+
+            function addLog(message, type = 'info') {
+                const logEntry = document.createElement('div');
+                logEntry.className = `log-entry ${type}`;
+                
+                // Format the message with proper timestamp
+                const timestamp = new Date().toLocaleTimeString();
+                logEntry.textContent = `[${timestamp}] ${message}`;
+                
+                statusLogs.appendChild(logEntry);
+                statusLogs.scrollTop = statusLogs.scrollHeight;
+            }
+
+            function displayResults(results) {
+                results.forEach(result => {
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = `result-entry ${result.status}`;
+                    resultDiv.setAttribute('data-test-id', result.test_id);
+                    resultDiv.innerHTML = `
+                        <strong>Test ID:</strong> ${result.test_id}<br>
+                        <strong>Status:</strong> <span class="status">${result.status}</span>
+                    `;
+                    resultsDiv.appendChild(resultDiv);
+                });
+            }
+
+            // Clean up event sources when page is unloaded
+            window.addEventListener('beforeunload', () => {
+                Object.values(eventSources).forEach(source => {
+                    source.close();
+                });
+                if (logEventSource) {
+                    logEventSource.close();
+                }
+            });
+        });
+    </script>
+</body>
+</html> 

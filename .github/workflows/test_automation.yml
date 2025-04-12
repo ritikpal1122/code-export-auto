@@ -1,0 +1,54 @@
+name: Run Test Automation
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows manual triggering of the workflow
+    inputs:
+      auth_token:
+        description: "LambdaTest API Authentication Token"
+        required: true
+        type: string
+      test_ids:
+        description: "Comma-separated list of Test IDs"
+        required: true
+        type: string
+
+jobs:
+  run-test-automation:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+
+    - name: Run Test Automation Script
+      env:
+        AUTH_TOKEN: ${{ inputs.auth_token }}
+        TEST_IDS: ${{ inputs.test_ids }}
+      run: |
+        echo '{"auth_token": "'$AUTH_TOKEN'", "test_ids": ['$TEST_IDS']}' | python test_automation.py
+
+    - name: Save Logs
+      if: always()
+      run: |
+        mkdir -p logs
+        cp code_gen_logs_*.txt logs/
+      continue-on-error: true
+
+    - name: Upload Logs as Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-automation-logs
+        path: logs/
